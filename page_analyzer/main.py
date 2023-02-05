@@ -1,5 +1,4 @@
 import os
-from datetime import datetime
 from itertools import zip_longest
 
 import psycopg2
@@ -15,8 +14,8 @@ from flask import (
     request,
     url_for,
 )
-from page_analyzer import urls
-from psycopg2.extras import NamedTupleCursor
+
+from page_analyzer import urls, db
 
 load_dotenv()
 
@@ -38,15 +37,8 @@ def index():
 @app.get('/urls')
 def urls_show():
     conn = get_db()
-    with conn.cursor(cursor_factory=NamedTupleCursor) as curs:
-        curs.execute(
-            'SELECT * FROM urls ORDER BY id DESC;',
-        )
-        urls = curs.fetchall()  # noqa: WPS442
-        curs.execute(
-            'SELECT DISTINCT ON (url_id) * FROM url_checks ORDER BY url_id DESC, id DESC;',
-        )
-        checks = curs.fetchall()
+    urls = db.get_urls(conn)
+    checks = db.get_url_checks(conn)
     conn.close()
 
     return render_template(
@@ -66,26 +58,15 @@ def post_url():
 
     conn = get_db()
     normalized_url = urls.normalize(url)
-    with conn.cursor(cursor_factory=NamedTupleCursor) as curs:
-        curs.execute(
-            'SELECT id, name\
-            FROM urls\
-            WHERE name=%s', (normalized_url,),
-        )
-        existed_url = curs.fetchone()
+    existed_url = db.get_url_by_name(conn, normalized_url)
 
-        if existed_url:
-            id = existed_url.id
-            flash('Страница уже существует', 'info')
-        else:
-            curs.execute(
-                'INSERT INTO urls (name, created_at)\
-                VALUES (%s, %s)\
-                RETURNING id;', (normalized_url, datetime.now()),
-            )
-            id = curs.fetchone().id
-            flash('Страница успешно добавлена', 'success')
-    conn.commit()
+    if existed_url:
+        id = existed_url.id
+        flash('Страница уже существует', 'info')
+    else:
+        id = db.create_url(conn, normalized_url)
+        flash('Страница успешно добавлена', 'success')
+
     conn.close()
 
     return redirect(url_for('url_show', id=id))
@@ -94,19 +75,11 @@ def post_url():
 @app.route('/urls/<int:id>')
 def url_show(id):
     conn = get_db()
-    with conn.cursor(cursor_factory=NamedTupleCursor) as url_curs:
-        url_curs.execute(
-            'SELECT * FROM urls WHERE id = %s', (id,),
-        )
-        url = url_curs.fetchone()
-        if url is None:
-            abort(404)
+    url = db.get_url_by_id(conn, id)
+    if url is None:
+        abort(404)
 
-    with conn.cursor(cursor_factory=NamedTupleCursor) as check_curs:
-        check_curs.execute(
-            'SELECT * FROM url_checks WHERE url_id = %s ORDER BY id DESC;', (id,),
-        )
-        checks = check_curs.fetchall()
+    checks = db.get_checks_by_url_id(conn, id)
     conn.close()
 
     return render_template(
@@ -135,11 +108,7 @@ def parse_page(page):
 @app.route('/urls/<int:id>/checks', methods=['POST'])
 def url_checks(id):
     conn = get_db()
-    with conn.cursor(cursor_factory=NamedTupleCursor) as url_curs:
-        url_curs.execute(
-            'SELECT * FROM urls WHERE id = %s', (id,),
-        )
-        url = url_curs.fetchone()
+    url = db.get_url_by_id(conn, id)
     try:
         resp = requests.get(url.name)
         resp.raise_for_status()
@@ -148,16 +117,10 @@ def url_checks(id):
         return redirect(url_for('url_show', id=id))
 
     page = resp.text
-    page_data = parse_page(page)
+    check_data = {'id': id, 'status_code': resp.status_code, **parse_page(page)}
 
-    with conn.cursor(cursor_factory=NamedTupleCursor) as check_curs:
-        check_curs.execute(
-            'INSERT INTO url_checks (url_id, status_code, h1, title, description, created_at)\
-            VALUES (%s, %s, %s, %s, %s, %s);',  # noqa: E501
-            (id, resp.status_code, page_data['h1'], page_data['title'], page_data['description'], datetime.now()),  # noqa: E501
-        )
-        flash('Страница успешно проверена', 'success')
-    conn.commit()
+    db.create_url_check(conn, check_data)
+    flash('Страница успешно проверена', 'success')
     conn.close()
 
     return redirect(url_for('url_show', id=id))

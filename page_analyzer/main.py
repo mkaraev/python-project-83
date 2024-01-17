@@ -1,7 +1,6 @@
 import os
 from itertools import zip_longest
 
-import psycopg2
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv

@@ -1,10 +1,9 @@
 import os
-from datetime import datetime
 from contextlib import contextmanager
+from datetime import datetime
 
-
-from psycopg2.extras import NamedTupleCursor
 import psycopg2
+from psycopg2.extras import NamedTupleCursor
 
 
 @contextmanager

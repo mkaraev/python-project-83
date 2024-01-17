@@ -72,7 +72,7 @@ def get_url_by_id(id):
             return url
 
 
-def create_url(conn, url):
+def create_url(url):
     with connection() as conn:
         with conn.cursor(cursor_factory=NamedTupleCursor) as curs:
             curs.execute(
